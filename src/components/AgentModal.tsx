@@ -1,170 +1,74 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Mic, Send, X, User, Mail, Phone, Building, Briefcase, CheckCircle2 } from 'lucide-react';
+import { useLiveAPI } from '../hooks/useLiveAPI';
 
 interface AgentModalProps {
   onClose: () => void;
   onLeadCaptured: () => void;
 }
 
-interface Message {
-  id: string;
-  role: 'user' | 'agent';
-  content: string;
-}
-
 interface LeadData {
-  name: string;
+  first_name: string;
+  last_name: string;
   email: string;
   phone: string;
   company: string;
-  use_case: string;
-  plan_interest: string;
 }
 
 export function AgentModal({ onClose, onLeadCaptured }: AgentModalProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      role: 'agent',
-      content: "Hi, I'm Ava, the SDR Agent voice assistant. I can answer questions about AI SDR workflows, speech-to-speech experiences, pricing, and implementation. How can I help?"
-    }
-  ]);
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [isQualifying, setIsQualifying] = useState(false);
   const [leadData, setLeadData] = useState<LeadData>({
-    name: '',
+    first_name: '',
+    last_name: '',
     email: '',
     phone: '',
-    company: '',
-    use_case: '',
-    plan_interest: ''
+    company: ''
   });
   
-  const [isListening, setIsListening] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<any>(null);
+  const leadDataRef = useRef(leadData);
+  useEffect(() => {
+    leadDataRef.current = leadData;
+  }, [leadData]);
 
-  const speak = (text: string) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      const voices = window.speechSynthesis.getVoices();
-      const femaleVoice = voices.find(v => v.name.includes('Female') || v.name.includes('Samantha') || v.name.includes('Google US English'));
-      if (femaleVoice) utterance.voice = femaleVoice;
-      window.speechSynthesis.speak(utterance);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const handleLeadUpdate = useCallback((data: any) => {
+    setIsQualifying(true);
+    setLeadData(prev => ({ ...prev, ...data }));
+  }, []);
+
+  const handleLeadComplete = useCallback(async () => {
+    try {
+      await fetch('/api/submit-lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(leadDataRef.current)
+      });
+      onLeadCaptured();
+    } catch (error) {
+      console.error('Failed to submit lead:', error);
     }
-  };
+  }, [onLeadCaptured]);
+
+  const { isConnected, isSpeaking, messages, connect, disconnect, sendTextMessage } = useLiveAPI(handleLeadUpdate, handleLeadComplete);
+
+  useEffect(() => {
+    connect();
+    return () => {
+      disconnect();
+    };
+  }, [connect, disconnect]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  useEffect(() => {
-    // Speak initial greeting when modal opens
-    speak(messages[0].content);
-    return () => {
-      if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
-    };
-  }, []);
-
-  const handleMicClick = () => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-
-    if (!('webkitSpeechRecognition' in window)) {
-      alert('Speech recognition is not supported in this browser.');
-      return;
-    }
-
-    if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-      return;
-    }
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    recognitionRef.current = recognition;
-    
-    recognition.continuous = false;
-    recognition.interimResults = true;
-
-    recognition.onstart = () => {
-      setIsListening(true);
-    };
-
-    recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results)
-        .map((result: any) => result[0])
-        .map((result: any) => result.transcript)
-        .join('');
-      
-      setInput(transcript);
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error', event.error);
-      setIsListening(false);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
-    recognition.start();
-  };
-
-  const handleSend = async () => {
-    if (!input.trim()) return;
-
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: input };
-    setMessages(prev => [...prev, userMsg]);
+  const handleSend = () => {
+    if (!input.trim() || !isConnected) return;
+    sendTextMessage(input);
     setInput('');
-    setIsLoading(true);
-
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [...messages, userMsg] })
-      });
-
-      const data = await response.json();
-      
-      if (data.toolCall) {
-        if (data.toolCall.name === 'update_lead_info') {
-          setIsQualifying(true);
-          setLeadData(prev => ({ ...prev, ...data.toolCall.args }));
-        } else if (data.toolCall.name === 'complete_lead_capture') {
-          // Submit lead to backend
-          await fetch('/api/submit-lead', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(leadData)
-          });
-          onLeadCaptured();
-          return;
-        }
-      }
-
-      if (data.text) {
-        setMessages(prev => [...prev, {
-          id: Date.now().toString(),
-          role: 'agent',
-          content: data.text
-        }]);
-        speak(data.text);
-      }
-    } catch (error) {
-      console.error('Failed to send message:', error);
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   return (
@@ -185,11 +89,13 @@ export function AgentModal({ onClose, onLeadCaptured }: AgentModalProps) {
                 <div className="w-10 h-10 rounded bg-[#95BF47]/20 flex items-center justify-center">
                   <div className="w-8 h-8 rounded bg-[#95BF47] text-black flex items-center justify-center font-bold">A</div>
                 </div>
-                <div className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-[#95BF47] border-2 border-[#161616]"></div>
+                <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#161616] ${isConnected ? 'bg-[#95BF47]' : 'bg-gray-500'}`}></div>
               </div>
               <div>
                 <h3 className="font-bold text-white">Ava</h3>
-                <p className="text-[13px] text-[#95BF47] font-medium">AI SDR Agent</p>
+                <p className="text-[13px] text-[#95BF47] font-medium">
+                  {isConnected ? (isSpeaking ? 'Speaking...' : 'Listening...') : 'Connecting...'}
+                </p>
               </div>
             </div>
             <button onClick={onClose} className="p-2 text-gray-400 hover:text-white rounded-full hover:bg-white/5">
@@ -209,23 +115,14 @@ export function AgentModal({ onClose, onLeadCaptured }: AgentModalProps) {
                 </div>
               </div>
             ))}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="bg-[#222] rounded-2xl rounded-tl-sm p-4 flex gap-1.5">
-                  <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-              </div>
-            )}
             <div ref={messagesEndRef} />
           </div>
 
           <div className="p-4 bg-[#161616] border-t border-white/5">
             <div className="relative flex items-center">
               <button 
-                onClick={handleMicClick}
-                className={`absolute left-3 p-2 transition-colors ${isListening ? 'text-red-500 animate-pulse' : 'text-gray-400 hover:text-[#95BF47]'}`}
+                className={`absolute left-3 p-2 transition-colors ${isConnected ? 'text-[#95BF47] animate-pulse' : 'text-gray-500'}`}
+                disabled={!isConnected}
               >
                 <Mic className="w-5 h-5" />
               </button>
@@ -234,12 +131,13 @@ export function AgentModal({ onClose, onLeadCaptured }: AgentModalProps) {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="Type or speak your message..."
-                className="w-full bg-[#222] text-white rounded-full pl-12 pr-12 py-3 focus:outline-none focus:ring-1 focus:ring-[#95BF47] border border-transparent focus:border-[#95BF47]/50 text-[15px]"
+                placeholder={isConnected ? "Speak or type your message..." : "Connecting to Live API..."}
+                disabled={!isConnected}
+                className="w-full bg-[#222] text-white rounded-full pl-12 pr-12 py-3 focus:outline-none focus:ring-1 focus:ring-[#95BF47] border border-transparent focus:border-[#95BF47]/50 text-[15px] disabled:opacity-50"
               />
               <button 
                 onClick={handleSend}
-                disabled={!input.trim() || isLoading}
+                disabled={!input.trim() || !isConnected}
                 className="absolute right-3 p-2 text-[#95BF47] hover:text-[#85ab3f] disabled:opacity-50 disabled:hover:text-[#95BF47] transition-colors"
               >
                 <Send className="w-5 h-5" />
@@ -265,24 +163,36 @@ export function AgentModal({ onClose, onLeadCaptured }: AgentModalProps) {
               <div className="flex-1 p-6 space-y-4 overflow-y-auto">
                 <div className="space-y-1">
                   <label className="text-[13px] text-gray-400 font-bold flex items-center gap-1.5 uppercase tracking-wide">
-                    <User className="w-3 h-3" /> Full Name
-                  </label>
-                  <input 
-                    type="text" 
-                    value={leadData.name} 
-                    onChange={e => setLeadData({...leadData, name: e.target.value})}
-                    className="w-full bg-[#222] border border-white/10 rounded-lg px-3 py-2 text-[15px] text-white focus:outline-none focus:border-[#95BF47]"
-                    placeholder="Pending..."
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[13px] text-gray-400 font-bold flex items-center gap-1.5 uppercase tracking-wide">
                     <Mail className="w-3 h-3" /> Work Email
                   </label>
                   <input 
                     type="email" 
                     value={leadData.email} 
                     onChange={e => setLeadData({...leadData, email: e.target.value})}
+                    className="w-full bg-[#222] border border-white/10 rounded-lg px-3 py-2 text-[15px] text-white focus:outline-none focus:border-[#95BF47]"
+                    placeholder="Pending..."
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[13px] text-gray-400 font-bold flex items-center gap-1.5 uppercase tracking-wide">
+                    <User className="w-3 h-3" /> First Name
+                  </label>
+                  <input 
+                    type="text" 
+                    value={leadData.first_name} 
+                    onChange={e => setLeadData({...leadData, first_name: e.target.value})}
+                    className="w-full bg-[#222] border border-white/10 rounded-lg px-3 py-2 text-[15px] text-white focus:outline-none focus:border-[#95BF47]"
+                    placeholder="Pending..."
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[13px] text-gray-400 font-bold flex items-center gap-1.5 uppercase tracking-wide">
+                    <User className="w-3 h-3" /> Last Name
+                  </label>
+                  <input 
+                    type="text" 
+                    value={leadData.last_name} 
+                    onChange={e => setLeadData({...leadData, last_name: e.target.value})}
                     className="w-full bg-[#222] border border-white/10 rounded-lg px-3 py-2 text-[15px] text-white focus:outline-none focus:border-[#95BF47]"
                     placeholder="Pending..."
                   />
@@ -310,22 +220,6 @@ export function AgentModal({ onClose, onLeadCaptured }: AgentModalProps) {
                     className="w-full bg-[#222] border border-white/10 rounded-lg px-3 py-2 text-[15px] text-white focus:outline-none focus:border-[#95BF47]"
                     placeholder="Optional"
                   />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[13px] text-gray-400 font-bold flex items-center gap-1.5 uppercase tracking-wide">
-                    <Briefcase className="w-3 h-3" /> Plan Interest
-                  </label>
-                  <select 
-                    value={leadData.plan_interest}
-                    onChange={e => setLeadData({...leadData, plan_interest: e.target.value})}
-                    className="w-full bg-[#222] border border-white/10 rounded-lg px-3 py-2 text-[15px] text-white focus:outline-none focus:border-[#95BF47]"
-                  >
-                    <option value="">Select a plan...</option>
-                    <option value="Basic">Basic ($29/mo)</option>
-                    <option value="Grow">Grow ($79/mo)</option>
-                    <option value="Advanced">Advanced ($299/mo)</option>
-                    <option value="Plus">Plus ($2,300/mo)</option>
-                  </select>
                 </div>
               </div>
             </motion.div>
