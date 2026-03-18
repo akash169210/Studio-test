@@ -1,0 +1,5 @@
+{
+  "name": "SDR Agent",
+  "description": "Replace qualified SDRs for half the price with a speech-to-speech website agent.",
+  "requestFramePermissions": ["microphone"]
+}
