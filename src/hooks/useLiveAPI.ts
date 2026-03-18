@@ -110,7 +110,7 @@ Once all required info is gathered, ask them to confirm the details.
 If they confirm, use the \`complete_lead_capture\` tool.`;
 
       const sessionPromise = ai.live.connect({
-        model: "gemini-2.5-flash-native-audio-preview-12-2025",
+        model: "gemini-2.5-flash-native-audio-preview-09-2025",
         callbacks: {
           onopen: async () => {
             setIsConnected(true);
@@ -213,7 +213,7 @@ If they confirm, use the \`complete_lead_capture\` tool.`;
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } }
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } }
           },
           systemInstruction,
           tools: [{ functionDeclarations: [updateLeadInfoTool, completeLeadCaptureTool] }],
@@ -225,7 +225,7 @@ If they confirm, use the \`complete_lead_capture\` tool.`;
       sessionRef.current = await sessionPromise;
       
       // Send initial greeting trigger
-      sessionRef.current.sendClientContent({ turns: "Hello! Please introduce yourself briefly.", turnComplete: true });
+      sessionRef.current.sendClientContent({ turns: [{ role: 'user', parts: [{ text: "Hello! Please introduce yourself briefly." }] }], turnComplete: true });
 
     } catch (error) {
       console.error("Failed to connect to Live API:", error);
@@ -265,7 +265,7 @@ If they confirm, use the \`complete_lead_capture\` tool.`;
   const sendTextMessage = useCallback((text: string) => {
     if (sessionRef.current) {
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'user', content: text }]);
-      sessionRef.current.sendClientContent({ turns: text, turnComplete: true });
+      sessionRef.current.sendClientContent({ turns: [{ role: 'user', parts: [{ text }] }], turnComplete: true });
     }
   }, []);
 
